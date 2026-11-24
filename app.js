@@ -1,8 +1,43 @@
+// ==================== SUPABASE CONFIGURATION ====================
+// นำค่า Project URL และ anon public key จาก Supabase Dashboard > Settings > API มาวางที่นี่
+const SUPABASE_URL = 'https://gimbullqdbvfetmsfzvq.supabase.co';
+const SUPABASE_ANON_KEY = 'sb_publishable_13Y6Rd1yWusVLdUk0C_Ifw_1Qnvew6V';
+
+const isSupabaseConfigured =
+  Boolean(window.supabase) &&
+  SUPABASE_URL.startsWith('https://') &&
+  !SUPABASE_URL.includes('YOUR_PROJECT_ID') &&
+  !SUPABASE_ANON_KEY.includes('YOUR_SUPABASE_ANON_KEY');
+
+const supabaseClient = isSupabaseConfigured
+  ? window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY)
+  : null;
+
 // ==================== CONSTANTS & DEFINITIONS ====================
 const STORAGE_KEY = 'anilog_tracker_items_v1';
-const USERS_STORAGE_KEY = 'anilog_users_v1';
-const SESSION_STORAGE_KEY = 'anilog_session_v1';
-const GUEST_USER = { id: 'guest', username: 'guest', displayName: 'ผู้เยี่ยมชม', isGuest: true };
+const GUEST_SESSION_KEY = 'anilog_guest_mode_v1';
+const GUEST_USER = { id: 'guest', username: 'guest', email: '', displayName: 'ผู้เยี่ยมชม', isGuest: true };
+
+const TYPE_META = {
+  anime: {
+    label: 'อนิเมะ',
+    unit: 'ตอน',
+    badgeClass: 'bg-sky-500/15 text-sky-300 border-sky-500/25',
+    tableBadgeClass: 'bg-sky-500/15 text-sky-300'
+  },
+  manga: {
+    label: 'มังงะ',
+    unit: 'บท',
+    badgeClass: 'bg-violet-500/15 text-violet-300 border-violet-500/25',
+    tableBadgeClass: 'bg-violet-500/15 text-violet-300'
+  },
+  manhwa: {
+    label: 'มังฮวา',
+    unit: 'บท',
+    badgeClass: 'bg-teal-500/15 text-teal-300 border-teal-500/25',
+    tableBadgeClass: 'bg-teal-500/15 text-teal-300'
+  }
+};
 
 const STATUS_META = {
   watching: {
@@ -49,7 +84,7 @@ const COVER_GRADIENTS = [
 ];
 
 const POPULAR_GENRES = [
-  'Action', 'Adventure', 'Comedy', 'Drama', 'Fantasy',
+  '2D', '3D', 'Action', 'Adventure', 'Comedy', 'Drama', 'Fantasy',
   'Horror', 'Mystery', 'Romance', 'Sci-Fi', 'Slice of Life', 'Sports', 'Thriller'
 ];
 
@@ -96,8 +131,54 @@ function getGradientClass(gradientId) {
   return found ? found.css : COVER_GRADIENTS[0].css;
 }
 
+function getTypeMeta(type) {
+  return TYPE_META[type] || TYPE_META.anime;
+}
+
 function getUnitLabel(type) {
-  return type === 'manga' ? 'บท' : 'ตอน';
+  return getTypeMeta(type).unit;
+}
+
+function isCloudUser() {
+  return Boolean(supabaseClient && state.currentUser && !state.currentUser.isGuest);
+}
+
+// แปลงแถวจากตาราง media_items (snake_case) เป็นรูปแบบที่ใช้ในหน้าเว็บ (camelCase)
+function mapDbRowToItem(row) {
+  return {
+    id: row.id,
+    title: row.title || '',
+    thaiTitle: row.thai_title || '',
+    type: row.type || 'anime',
+    status: row.status || 'watching',
+    progress: Number(row.progress) || 0,
+    total: Number(row.total) || 0,
+    score: Number(row.score) || 0,
+    genres: Array.isArray(row.genres) ? row.genres : [],
+    review: row.review || '',
+    coverGradient: row.cover_gradient || 'indigo',
+    coverImage: row.cover_image || '',
+    updatedAt: row.updated_at ? new Date(row.updated_at).getTime() : Date.now()
+  };
+}
+
+// แปลงข้อมูลจากหน้าเว็บเป็นรูปแบบคอลัมน์ของตาราง media_items
+function mapItemToDbRow(item, userId) {
+  return {
+    user_id: userId,
+    title: item.title,
+    thai_title: item.thaiTitle || '',
+    type: item.type || 'anime',
+    status: item.status || 'watching',
+    progress: Math.max(0, Number(item.progress) || 0),
+    total: Math.max(0, Number(item.total) || 0),
+    score: Math.min(10, Math.max(0, Number(item.score) || 0)),
+    genres: Array.isArray(item.genres) ? item.genres : [],
+    review: item.review || '',
+    cover_gradient: item.coverGradient || 'indigo',
+    cover_image: item.coverImage || '',
+    updated_at: new Date().toISOString()
+  };
 }
 
 function parseGenres(rawStr) {
@@ -123,6 +204,7 @@ function renderCoverInnerHTML(title, coverGradient, coverImage, sizeClass = 'tex
 
 function showToast(message, type = 'info') {
   const container = document.getElementById('toast-container');
+  if (!container) return;
   const toast = document.createElement('div');
   const colorMap = {
     success: 'bg-emerald-500/15 border-emerald-500/40 text-emerald-200',
@@ -139,100 +221,11 @@ function showToast(message, type = 'info') {
   }, 2800);
 }
 
-// ==================== AUTHENTICATION & USER ACCOUNTS ====================
-async function hashPassword(password) {
-  try {
-    if (window.crypto && window.crypto.subtle) {
-      const encoder = new TextEncoder();
-      const data = encoder.encode('anilog_salt_v1:' + password);
-      const hashBuffer = await crypto.subtle.digest('SHA-256', data);
-      return Array.from(new Uint8Array(hashBuffer))
-        .map(b => b.toString(16).padStart(2, '0'))
-        .join('');
-    }
-  } catch (err) {
-    console.warn('Web Crypto unavailable, using fallback hash:', err);
-  }
-  let h = 2166136261;
-  const str = 'anilog_salt_v1:' + password;
-  for (let i = 0; i < str.length; i++) {
-    h ^= str.charCodeAt(i);
-    h = Math.imul(h, 16777619);
-  }
-  return 'fb_' + (h >>> 0).toString(16);
-}
-
-function getStoredUsers() {
-  try {
-    const raw = localStorage.getItem(USERS_STORAGE_KEY);
-    const parsed = raw ? JSON.parse(raw) : [];
-    return Array.isArray(parsed) ? parsed : [];
-  } catch (err) {
-    console.error('Failed to read users:', err);
-    return [];
-  }
-}
-
-function saveStoredUsers(users) {
-  try {
-    localStorage.setItem(USERS_STORAGE_KEY, JSON.stringify(users));
-    return true;
-  } catch (err) {
-    console.error('Failed to save users:', err);
-    showToast('ไม่สามารถบันทึกข้อมูลบัญชีผู้ใช้ได้', 'error');
-    return false;
-  }
-}
-
-function saveSession(user, remember = true) {
-  const payload = JSON.stringify({
-    id: user.id,
-    username: user.username,
-    displayName: user.displayName,
-    isGuest: Boolean(user.isGuest)
-  });
-  try {
-    if (remember) {
-      localStorage.setItem(SESSION_STORAGE_KEY, payload);
-      sessionStorage.removeItem(SESSION_STORAGE_KEY);
-    } else {
-      sessionStorage.setItem(SESSION_STORAGE_KEY, payload);
-      localStorage.removeItem(SESSION_STORAGE_KEY);
-    }
-  } catch (err) {
-    console.error('Failed to save session:', err);
-  }
-}
-
-function loadSession() {
-  try {
-    const raw = sessionStorage.getItem(SESSION_STORAGE_KEY) || localStorage.getItem(SESSION_STORAGE_KEY);
-    if (!raw) return null;
-    const parsed = JSON.parse(raw);
-    if (!parsed || !parsed.id) return null;
-    if (parsed.isGuest) return { ...GUEST_USER };
-    const users = getStoredUsers();
-    const found = users.find(u => u.id === parsed.id);
-    if (!found) return null;
-    return { id: found.id, username: found.username, displayName: found.displayName, isGuest: false };
-  } catch (err) {
-    console.error('Failed to load session:', err);
-    return null;
-  }
-}
-
-function clearSession() {
-  try {
-    localStorage.removeItem(SESSION_STORAGE_KEY);
-    sessionStorage.removeItem(SESSION_STORAGE_KEY);
-  } catch (err) {
-    console.error('Failed to clear session:', err);
-  }
-}
-
+// ==================== AUTHENTICATION & USER ACCOUNTS (SUPABASE) ====================
 function showAuthError(msg) {
   const box = document.getElementById('auth-error-box');
   const text = document.getElementById('auth-error-text');
+  if (!box || !text) return;
   if (!msg) {
     box.classList.add('hidden');
     text.textContent = '';
@@ -273,12 +266,50 @@ function hideAuthScreen() {
   document.body.classList.remove('overflow-hidden');
 }
 
-function completeSignIn(user, remember = true, toastMsg = '') {
+async function fetchUserProfile(authUser) {
+  const fallbackName =
+    (authUser.user_metadata && authUser.user_metadata.display_name) ||
+    (authUser.email ? authUser.email.split('@')[0] : 'ผู้ใช้');
+
+  try {
+    const { data, error } = await supabaseClient
+      .from('profiles')
+      .select('username, display_name')
+      .eq('id', authUser.id)
+      .maybeSingle();
+
+    if (!error && data) {
+      return {
+        id: authUser.id,
+        email: authUser.email || '',
+        username: data.username || fallbackName,
+        displayName: data.display_name || fallbackName,
+        isGuest: false
+      };
+    }
+  } catch (err) {
+    console.warn('Could not load profile row, using metadata fallback:', err);
+  }
+
+  return {
+    id: authUser.id,
+    email: authUser.email || '',
+    username: fallbackName,
+    displayName: fallbackName,
+    isGuest: false
+  };
+}
+
+async function completeSignIn(user, toastMsg = '') {
   state.currentUser = user;
-  saveSession(user, remember);
+  if (user.isGuest) {
+    localStorage.setItem(GUEST_SESSION_KEY, '1');
+  } else {
+    localStorage.removeItem(GUEST_SESSION_KEY);
+  }
   hideAuthScreen();
   updateUserProfileUI();
-  loadItems();
+  await loadItems();
   state.typeFilter = 'all';
   state.statusFilter = 'all';
   state.searchQuery = '';
@@ -292,53 +323,63 @@ function completeSignIn(user, remember = true, toastMsg = '') {
 async function handleLogin(event) {
   event.preventDefault();
   showAuthError('');
-  const username = document.getElementById('login-username').value.trim().toLowerCase();
+
+  if (!supabaseClient) {
+    showAuthError('ยังไม่ได้ตั้งค่า SUPABASE_URL และ SUPABASE_ANON_KEY ในไฟล์ app.js (สามารถกดเข้าใช้งานแบบ Guest ได้)');
+    return;
+  }
+
+  const email = document.getElementById('login-email').value.trim();
   const password = document.getElementById('login-password').value;
-  const remember = document.getElementById('login-remember').checked;
+  const submitBtn = document.getElementById('btn-login-submit');
 
-  if (!username || !password) {
-    showAuthError('กรุณากรอกชื่อผู้ใช้และรหัสผ่านให้ครบถ้วน');
+  if (!email || !password) {
+    showAuthError('กรุณากรอกอีเมลและรหัสผ่านให้ครบถ้วน');
     return;
   }
 
-  const users = getStoredUsers();
-  const user = users.find(u => u.username.toLowerCase() === username);
-  if (!user) {
-    showAuthError('ไม่พบบัญชีชื่อผู้ใช้นี้ในระบบ กรุณาตรวจสอบหรือสมัครสมาชิกใหม่');
-    return;
-  }
+  try {
+    submitBtn.disabled = true;
+    submitBtn.textContent = 'กำลังเข้าสู่ระบบ...';
 
-  const hashed = await hashPassword(password);
-  if (user.passwordHash !== hashed) {
-    showAuthError('รหัสผ่านไม่ถูกต้อง กรุณาลองใหม่อีกครั้ง');
-    return;
-  }
+    const { data, error } = await supabaseClient.auth.signInWithPassword({ email, password });
+    if (error) {
+      showAuthError('อีเมลหรือรหัสผ่านไม่ถูกต้อง หรือยังไม่ได้ยืนยันอีเมล');
+      return;
+    }
 
-  completeSignIn(
-    { id: user.id, username: user.username, displayName: user.displayName, isGuest: false },
-    remember,
-    `ยินดีต้อนรับกลับมา, ${user.displayName}!`
-  );
+    const userProfile = await fetchUserProfile(data.user);
+    await completeSignIn(userProfile, `ยินดีต้อนรับกลับมา, ${userProfile.displayName}!`);
+  } catch (err) {
+    console.error('Login error:', err);
+    showAuthError('ไม่สามารถเชื่อมต่อกับเซิร์ฟเวอร์ได้ กรุณาลองใหม่อีกครั้ง');
+  } finally {
+    submitBtn.disabled = false;
+    submitBtn.textContent = 'เข้าสู่ระบบ';
+  }
 }
 
 async function handleRegister(event) {
   event.preventDefault();
   showAuthError('');
+
+  if (!supabaseClient) {
+    showAuthError('ยังไม่ได้ตั้งค่า SUPABASE_URL และ SUPABASE_ANON_KEY ในไฟล์ app.js');
+    return;
+  }
+
   const displayName = document.getElementById('reg-displayname').value.trim();
-  const username = document.getElementById('reg-username').value.trim().toLowerCase();
+  const email = document.getElementById('reg-email').value.trim();
   const password = document.getElementById('reg-password').value;
   const confirmPw = document.getElementById('reg-confirm').value;
+  const submitBtn = document.getElementById('btn-register-submit');
 
-  if (!displayName || !username) {
-    showAuthError('กรุณากรอกชื่อที่แสดงและชื่อผู้ใช้ให้ครบถ้วน');
+  if (!displayName || !email) {
+    showAuthError('กรุณากรอกชื่อที่แสดงและอีเมลให้ครบถ้วน');
     return;
   }
-  if (!/^[a-z0-9_.-]{3,24}$/.test(username)) {
-    showAuthError('ชื่อผู้ใช้ต้องเป็นตัวอักษรภาษาอังกฤษ ตัวเลข หรือ _ . - ความยาว 3–24 ตัวอักษร');
-    return;
-  }
-  if (password.length < 4) {
-    showAuthError('รหัสผ่านต้องมีอย่างน้อย 4 ตัวอักษร');
+  if (password.length < 6) {
+    showAuthError('รหัสผ่านต้องมีอย่างน้อย 6 ตัวอักษร');
     return;
   }
   if (password !== confirmPw) {
@@ -346,38 +387,56 @@ async function handleRegister(event) {
     return;
   }
 
-  const users = getStoredUsers();
-  if (users.some(u => u.username.toLowerCase() === username)) {
-    showAuthError('ชื่อผู้ใช้นี้ถูกใช้งานแล้ว กรุณาเลือกชื่ออื่น');
-    return;
+  try {
+    submitBtn.disabled = true;
+    submitBtn.textContent = 'กำลังสร้างบัญชี...';
+
+    const { data, error } = await supabaseClient.auth.signUp({
+      email,
+      password,
+      options: {
+        data: {
+          display_name: displayName,
+          username: email.split('@')[0]
+        }
+      }
+    });
+
+    if (error) {
+      showAuthError(error.message || 'ไม่สามารถสมัครสมาชิกได้ กรุณาลองใหม่');
+      return;
+    }
+
+    if (data.session && data.user) {
+      const userProfile = await fetchUserProfile(data.user);
+      await completeSignIn(userProfile, `สร้างบัญชีสำเร็จ! ยินดีต้อนรับคุณ ${userProfile.displayName}`);
+    } else {
+      showToast('สมัครสมาชิกสำเร็จ! กรุณาตรวจสอบอีเมลเพื่อยืนยันบัญชีก่อนเข้าสู่ระบบ', 'info');
+      switchAuthTab('login');
+    }
+  } catch (err) {
+    console.error('Register error:', err);
+    showAuthError('เกิดข้อผิดพลาดในการเชื่อมต่อเซิร์ฟเวอร์');
+  } finally {
+    submitBtn.disabled = false;
+    submitBtn.textContent = 'สร้างบัญชีและเข้าสู่ระบบ';
   }
-
-  const passwordHash = await hashPassword(password);
-  const newUser = {
-    id: 'user-' + Date.now() + '-' + Math.random().toString(36).slice(2, 6),
-    username,
-    displayName,
-    passwordHash,
-    createdAt: Date.now()
-  };
-
-  users.push(newUser);
-  if (!saveStoredUsers(users)) return;
-
-  completeSignIn(
-    { id: newUser.id, username: newUser.username, displayName: newUser.displayName, isGuest: false },
-    true,
-    `สร้างบัญชีสำเร็จ! ยินดีต้อนรับคุณ ${newUser.displayName}`
-  );
 }
 
-function loginAsGuest() {
-  completeSignIn({ ...GUEST_USER }, true, 'เข้าใช้งานแบบผู้เยี่ยมชม (Guest)');
+async function loginAsGuest() {
+  await completeSignIn({ ...GUEST_USER }, 'เข้าใช้งานแบบผู้เยี่ยมชม (Guest — บันทึกในเครื่องนี้)');
 }
 
-function handleLogout() {
+async function handleLogout() {
   closeUserMenu();
-  clearSession();
+  localStorage.removeItem(GUEST_SESSION_KEY);
+  if (isCloudUser()) {
+    try {
+      await supabaseClient.auth.signOut();
+    } catch (err) {
+      console.error('Logout error:', err);
+    }
+  }
   state.currentUser = null;
   state.items = [];
   showAuthScreen('login');
@@ -401,11 +460,13 @@ function closeUserMenu() {
 
 function updateUserProfileUI() {
   const user = state.currentUser || GUEST_USER;
-  const initial = (user.displayName || user.username || 'U').trim().charAt(0).toUpperCase();
+  const initial = (user.displayName || user.email || 'U').trim().charAt(0).toUpperCase();
   document.getElementById('nav-user-avatar').textContent = initial;
   document.getElementById('nav-user-name').textContent = user.displayName;
   document.getElementById('dropdown-user-display').textContent = user.displayName;
-  document.getElementById('dropdown-user-handle').textContent = user.isGuest ? 'โหมดผู้เยี่ยมชม (Guest)' : '@' + user.username;
+  document.getElementById('dropdown-user-handle').textContent = user.isGuest
+    ? 'โหมดผู้เยี่ยมชม (Guest)'
+    : (user.email || '@' + user.username);
   document.getElementById('menu-btn-profile').classList.toggle('hidden', Boolean(user.isGuest));
   document.getElementById('menu-btn-switch-auth').classList.toggle('hidden', !user.isGuest);
 }
@@ -415,7 +476,7 @@ function openProfileModal() {
   if (!state.currentUser || state.currentUser.isGuest) return;
   document.getElementById('profile-form').reset();
   document.getElementById('profile-displayname').value = state.currentUser.displayName || '';
-  document.getElementById('profile-modal-handle').textContent = '@' + state.currentUser.username;
+  document.getElementById('profile-modal-handle').textContent = state.currentUser.email || '@' + state.currentUser.username;
   document.getElementById('profile-modal').classList.remove('hidden');
   document.body.classList.add('overflow-hidden');
 }
@@ -427,10 +488,9 @@ function closeProfileModal() {
 
 async function handleSaveProfile(event) {
   event.preventDefault();
-  if (!state.currentUser || state.currentUser.isGuest) return;
+  if (!isCloudUser()) return;
 
   const newDisplayName = document.getElementById('profile-displayname').value.trim();
-  const currentPw = document.getElementById('profile-current-pw').value;
   const newPw = document.getElementById('profile-new-pw').value;
 
   if (!newDisplayName) {
@@ -438,76 +498,81 @@ async function handleSaveProfile(event) {
     return;
   }
 
-  const users = getStoredUsers();
-  const userRecord = users.find(u => u.id === state.currentUser.id);
-  if (!userRecord) {
-    showToast('ไม่พบข้อมูลบัญชีผู้ใช้', 'error');
-    return;
-  }
-
-  if (newPw) {
-    if (!currentPw) {
-      showToast('กรุณากรอกรหัสผ่านปัจจุบันเพื่อยืนยันการเปลี่ยนรหัสผ่าน', 'error');
-      return;
-    }
-    const currentHash = await hashPassword(currentPw);
-    if (currentHash !== userRecord.passwordHash) {
-      showToast('รหัสผ่านปัจจุบันไม่ถูกต้อง', 'error');
-      return;
-    }
-    if (newPw.length < 4) {
-      showToast('รหัสผ่านใหม่ต้องมีอย่างน้อย 4 ตัวอักษร', 'error');
-      return;
-    }
-    userRecord.passwordHash = await hashPassword(newPw);
-  }
-
-  userRecord.displayName = newDisplayName;
-  if (!saveStoredUsers(users)) return;
-
-  state.currentUser.displayName = newDisplayName;
-  const remembered = Boolean(localStorage.getItem(SESSION_STORAGE_KEY));
-  saveSession(state.currentUser, remembered);
-  updateUserProfileUI();
-  closeProfileModal();
-  showToast('อัปเดตข้อมูลโปรไฟล์เรียบร้อยแล้ว', 'success');
-}
-
-// ==================== PERSISTENCE (LOCALSTORAGE PER USER) ====================
-function getItemsStorageKey() {
-  if (!state.currentUser || state.currentUser.isGuest) {
-    return STORAGE_KEY;
-  }
-  return `${STORAGE_KEY}_${state.currentUser.id}`;
-}
-
-function loadItems() {
   try {
-    const raw = localStorage.getItem(getItemsStorageKey());
+    const { error: profileErr } = await supabaseClient
+      .from('profiles')
+      .upsert({
+        id: state.currentUser.id,
+        display_name: newDisplayName,
+        updated_at: new Date().toISOString()
+      });
+
+    if (profileErr) throw profileErr;
+
+    const authPayload = { data: { display_name: newDisplayName } };
+    if (newPw) {
+      if (newPw.length < 6) {
+        showToast('รหัสผ่านใหม่ต้องมีอย่างน้อย 6 ตัวอักษร', 'error');
+        return;
+      }
+      authPayload.password = newPw;
+    }
+
+    const { error: authErr } = await supabaseClient.auth.updateUser(authPayload);
+    if (authErr) throw authErr;
+
+    state.currentUser.displayName = newDisplayName;
+    updateUserProfileUI();
+    closeProfileModal();
+    showToast('อัปเดตข้อมูลโปรไฟล์เรียบร้อยแล้ว', 'success');
+  } catch (err) {
+    console.error('Failed to update profile:', err);
+    showToast('ไม่สามารถบันทึกโปรไฟล์ได้: ' + (err.message || 'เกิดข้อผิดพลาด'), 'error');
+  }
+}
+
+// ==================== PERSISTENCE (SUPABASE + LOCALSTORAGE GUEST) ====================
+async function loadItems() {
+  if (isCloudUser()) {
+    try {
+      const { data, error } = await supabaseClient
+        .from('media_items')
+        .select('*')
+        .eq('user_id', state.currentUser.id)
+        .order('updated_at', { ascending: false });
+
+      if (error) throw error;
+      state.items = (data || []).map(mapDbRowToItem);
+      return;
+    } catch (err) {
+      console.error('Failed to fetch items from Supabase:', err);
+      showToast('ไม่สามารถดึงข้อมูลจากเซิร์ฟเวอร์ได้', 'error');
+      state.items = [];
+      return;
+    }
+  }
+
+  try {
+    const raw = localStorage.getItem(STORAGE_KEY);
     if (raw) {
       const parsed = JSON.parse(raw);
       if (Array.isArray(parsed)) {
-        const cleaned = parsed.filter(item => !(item && typeof item.id === 'string' && item.id.startsWith('demo-')));
-        state.items = cleaned;
-        if (cleaned.length !== parsed.length) {
-          saveItems();
-        }
+        state.items = parsed;
         return;
       }
     }
   } catch (err) {
-    console.error('Failed to load items:', err);
+    console.error('Failed to load guest items:', err);
   }
   state.items = [];
-  saveItems();
 }
 
-function saveItems() {
+function saveGuestItems() {
   try {
-    localStorage.setItem(getItemsStorageKey(), JSON.stringify(state.items));
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(state.items));
     return true;
   } catch (err) {
-    console.error('Failed to save items:', err);
+    console.error('Failed to save guest items:', err);
     if (err && (err.name === 'QuotaExceededError' || err.code === 22)) {
       showToast('พื้นที่จัดเก็บ localStorage เต็ม! กรุณาลบรูปปกบางเรื่องหรือใช้ลิงก์รูปแทน', 'error');
     } else {
@@ -616,7 +681,7 @@ function getFilteredAndSortedItems() {
 }
 
 // ==================== QUICK ACTIONS ====================
-function quickIncrement(id, event) {
+async function quickIncrement(id, event) {
   if (event) event.stopPropagation();
   const item = state.items.find(i => i.id === id);
   if (!item) return;
@@ -628,21 +693,49 @@ function quickIncrement(id, event) {
     return;
   }
 
+  const prevProgress = item.progress;
+  const prevStatus = item.status;
+  const prevUpdated = item.updatedAt;
+
   item.progress = current + 1;
   item.updatedAt = Date.now();
 
+  let toastMsg = `อัปเดต "${item.title}" เป็น ${item.progress} ${getUnitLabel(item.type)}`;
   if (total > 0 && item.progress >= total && item.status !== 'completed') {
     item.status = 'completed';
-    showToast(`ยินดีด้วย! "${item.title}" จบครบ ${total} ${getUnitLabel(item.type)}แล้ว`, 'success');
-  } else {
-    showToast(`อัปเดต "${item.title}" เป็น ${item.progress} ${getUnitLabel(item.type)}`, 'success');
+    toastMsg = `ยินดีด้วย! "${item.title}" จบครบ ${total} ${getUnitLabel(item.type)}แล้ว`;
   }
 
-  saveItems();
+  if (isCloudUser()) {
+    try {
+      const { error } = await supabaseClient
+        .from('media_items')
+        .update({
+          progress: item.progress,
+          status: item.status,
+          updated_at: new Date().toISOString()
+        })
+        .eq('id', item.id)
+        .eq('user_id', state.currentUser.id);
+
+      if (error) throw error;
+    } catch (err) {
+      console.error('Quick increment failed:', err);
+      item.progress = prevProgress;
+      item.status = prevStatus;
+      item.updatedAt = prevUpdated;
+      showToast('ไม่สามารถอัปเดตข้อมูลบนเซิร์ฟเวอร์ได้', 'error');
+      return;
+    }
+  } else {
+    saveGuestItems();
+  }
+
+  showToast(toastMsg, 'success');
   renderAll();
 }
 
-function handleClearAllData() {
+async function handleClearAllData() {
   const btnLabel = document.getElementById('btn-clear-all-label');
   if (state.items.length === 0) {
     showToast('ไม่มีรายการให้ล้างในขณะนี้', 'info');
@@ -659,8 +752,25 @@ function handleClearAllData() {
   }
   state.clearAllArmed = false;
   btnLabel.textContent = 'ล้างข้อมูลทั้งหมด';
+
+  if (isCloudUser()) {
+    try {
+      const { error } = await supabaseClient
+        .from('media_items')
+        .delete()
+        .eq('user_id', state.currentUser.id);
+      if (error) throw error;
+    } catch (err) {
+      console.error('Clear all failed:', err);
+      showToast('ไม่สามารถล้างข้อมูลบนเซิร์ฟเวอร์ได้', 'error');
+      return;
+    }
+  } else {
+    state.items = [];
+    saveGuestItems();
+  }
+
   state.items = [];
-  saveItems();
   renderAll();
   showToast('ล้างข้อมูลรายการทั้งหมดเรียบร้อยแล้ว', 'info');
 }
@@ -676,11 +786,12 @@ function renderDashboard() {
   const total = items.length;
   const animeCount = items.filter(i => i.type === 'anime').length;
   const mangaCount = items.filter(i => i.type === 'manga').length;
+  const manhwaCount = items.filter(i => i.type === 'manhwa').length;
   const completedCount = items.filter(i => i.status === 'completed').length;
   const completedPct = total > 0 ? Math.round((completedCount / total) * 100) : 0;
 
   const animeEp = items.filter(i => i.type === 'anime').reduce((sum, i) => sum + (Number(i.progress) || 0), 0);
-  const mangaCh = items.filter(i => i.type === 'manga').reduce((sum, i) => sum + (Number(i.progress) || 0), 0);
+  const readingCh = items.filter(i => i.type === 'manga' || i.type === 'manhwa').reduce((sum, i) => sum + (Number(i.progress) || 0), 0);
 
   const rated = items.filter(i => Number(i.score) > 0);
   const avgScore = rated.length > 0
@@ -688,15 +799,14 @@ function renderDashboard() {
     : '-';
 
   document.getElementById('stat-total').textContent = total.toLocaleString();
-  document.getElementById('stat-total-sub').textContent = `อนิเมะ ${animeCount} • มังงะ ${mangaCount}`;
+  document.getElementById('stat-total-sub').textContent = `อนิเมะ ${animeCount} • มังงะ ${mangaCount} • มังฮวา ${manhwaCount}`;
   document.getElementById('stat-completed').textContent = completedCount.toLocaleString();
   document.getElementById('stat-completed-sub').textContent = `คิดเป็น ${completedPct}% ของทั้งหมด`;
-  document.getElementById('stat-progress').textContent = (animeEp + mangaCh).toLocaleString();
-  document.getElementById('stat-progress-sub').textContent = `${animeEp.toLocaleString()} ตอน • ${mangaCh.toLocaleString()} บท`;
+  document.getElementById('stat-progress').textContent = (animeEp + readingCh).toLocaleString();
+  document.getElementById('stat-progress-sub').textContent = `${animeEp.toLocaleString()} ตอน • ${readingCh.toLocaleString()} บท`;
   document.getElementById('stat-avg-score').textContent = avgScore;
   document.getElementById('stat-avg-sub').textContent = rated.length > 0 ? `จาก ${rated.length} เรื่องที่ให้คะแนน` : 'ยังไม่มีเรื่องที่ให้คะแนน';
 
-  // Continue Watching / Reading
   const watchingGrid = document.getElementById('dashboard-watching-grid');
   const watchingItems = items
     .filter(i => i.status === 'watching')
@@ -707,20 +817,19 @@ function renderDashboard() {
     watchingGrid.innerHTML = `
       <div class="sm:col-span-2 bg-[#1E293B] border border-dashed border-[#334155] rounded-2xl p-8 text-center">
         <p class="text-sm font-medium text-slate-300">ยังไม่มีรายการที่กำลังติดตาม</p>
-        <p class="text-xs text-slate-500 mt-1">เริ่มต้นเพิ่มอนิเมะหรือมังงะเรื่องโปรดของคุณได้เลย</p>
+        <p class="text-xs text-slate-500 mt-1">เริ่มต้นเพิ่มอนิเมะ มังงะ หรือมังฮวาเรื่องโปรดของคุณได้เลย</p>
         <button type="button" onclick="openAddModal()" class="mt-4 px-4 py-2 rounded-xl bg-indigo-500 hover:bg-indigo-400 text-white text-xs font-semibold transition-colors">
           + เพิ่มเรื่องแรกของคุณ
         </button>
       </div>`;
   } else {
     watchingGrid.innerHTML = watchingItems.map(item => {
-      const unit = getUnitLabel(item.type);
+      const typeInfo = getTypeMeta(item.type);
+      const unit = typeInfo.unit;
       const progress = Number(item.progress) || 0;
       const totalCount = Number(item.total) || 0;
       const pct = totalCount > 0 ? Math.min(100, Math.round((progress / totalCount) * 100)) : 0;
-      const typeBadge = item.type === 'anime'
-        ? '<span class="px-2 py-0.5 rounded-md text-[10px] font-semibold bg-sky-500/15 text-sky-300 border border-sky-500/25">อนิเมะ</span>'
-        : '<span class="px-2 py-0.5 rounded-md text-[10px] font-semibold bg-violet-500/15 text-violet-300 border border-violet-500/25">มังงะ</span>';
+      const typeBadge = `<span class="px-2 py-0.5 rounded-md text-[10px] font-semibold border ${typeInfo.badgeClass}">${typeInfo.label}</span>`;
       const scoreBadge = Number(item.score) > 0
         ? `<span class="text-xs font-semibold text-amber-400 flex items-center gap-0.5">★ ${item.score}</span>`
         : '';
@@ -758,7 +867,6 @@ function renderDashboard() {
     }).join('');
   }
 
-  // Top Genres Chart
   const genreCounts = {};
   items.forEach(item => {
     (item.genres || []).forEach(g => {
@@ -789,16 +897,17 @@ function renderDashboard() {
 }
 
 function renderListView() {
-  // Update type tab counts & styles
   const allCount = state.items.length;
   const animeCount = state.items.filter(i => i.type === 'anime').length;
   const mangaCount = state.items.filter(i => i.type === 'manga').length;
+  const manhwaCount = state.items.filter(i => i.type === 'manhwa').length;
 
   document.getElementById('count-type-all').textContent = allCount;
   document.getElementById('count-type-anime').textContent = animeCount;
   document.getElementById('count-type-manga').textContent = mangaCount;
+  document.getElementById('count-type-manhwa').textContent = manhwaCount;
 
-  ['all', 'anime', 'manga'].forEach(t => {
+  ['all', 'anime', 'manga', 'manhwa'].forEach(t => {
     const btn = document.getElementById(`type-tab-${t}`);
     const active = state.typeFilter === t;
     btn.className = `px-3.5 py-1.5 rounded-lg text-xs font-semibold transition-all ${
@@ -806,7 +915,6 @@ function renderListView() {
     }`;
   });
 
-  // Update view mode buttons
   document.getElementById('btn-view-grid').className = `p-1.5 rounded-lg transition-colors ${
     state.listViewMode === 'grid' ? 'bg-indigo-500 text-white' : 'text-slate-400 hover:text-white'
   }`;
@@ -814,7 +922,6 @@ function renderListView() {
     state.listViewMode === 'table' ? 'bg-indigo-500 text-white' : 'text-slate-400 hover:text-white'
   }`;
 
-  // Render Status Pills
   const typeScopedItems = state.typeFilter === 'all'
     ? state.items
     : state.items.filter(i => i.type === state.typeFilter);
@@ -841,7 +948,6 @@ function renderListView() {
       </button>`;
   }).join('');
 
-  // Render Items
   const filtered = getFilteredAndSortedItems();
   const container = document.getElementById('list-content-container');
 
@@ -861,7 +967,8 @@ function renderListView() {
     container.innerHTML = `
       <div class="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-4">
         ${filtered.map(item => {
-          const unit = getUnitLabel(item.type);
+          const typeInfo = getTypeMeta(item.type);
+          const unit = typeInfo.unit;
           const status = STATUS_META[item.status] || STATUS_META.watching;
           const progress = Number(item.progress) || 0;
           const total = Number(item.total) || 0;
@@ -873,7 +980,7 @@ function renderListView() {
                 ${renderCoverInnerHTML(item.title, item.coverGradient, item.coverImage, 'text-3xl')}
                 <div class="absolute top-2 left-2">
                   <span class="px-2 py-0.5 rounded-md text-[10px] font-semibold backdrop-blur-md bg-slate-950/75 text-white border border-white/10">
-                    ${item.type === 'anime' ? 'อนิเมะ' : 'มังงะ'}
+                    ${typeInfo.label}
                   </span>
                 </div>
                 ${Number(item.score) > 0 ? `
@@ -929,7 +1036,8 @@ function renderListView() {
             </thead>
             <tbody class="divide-y divide-[#334155]/70 text-sm">
               ${filtered.map(item => {
-                const unit = getUnitLabel(item.type);
+                const typeInfo = getTypeMeta(item.type);
+                const unit = typeInfo.unit;
                 const status = STATUS_META[item.status] || STATUS_META.watching;
                 const progress = Number(item.progress) || 0;
                 const total = Number(item.total) || 0;
@@ -947,8 +1055,8 @@ function renderListView() {
                       </div>
                     </td>
                     <td class="py-3 px-3 whitespace-nowrap">
-                      <span class="px-2 py-0.5 rounded-md text-xs font-medium ${item.type === 'anime' ? 'bg-sky-500/15 text-sky-300' : 'bg-violet-500/15 text-violet-300'}">
-                        ${item.type === 'anime' ? 'อนิเมะ' : 'มังงะ'}
+                      <span class="px-2 py-0.5 rounded-md text-xs font-medium ${typeInfo.tableBadgeClass}">
+                        ${typeInfo.label}
                       </span>
                     </td>
                     <td class="py-3 px-3 whitespace-nowrap">
@@ -1056,7 +1164,7 @@ function processCoverFile(file, prefix) {
   const reader = new FileReader();
   reader.onload = (e) => {
     const img = new Image();
-    img.onload = () => {
+    img.onload = async () => {
       const maxWidth = 400;
       let width = img.width;
       let height = img.height;
@@ -1069,10 +1177,33 @@ function processCoverFile(file, prefix) {
       canvas.height = height;
       const ctx = canvas.getContext('2d');
       ctx.drawImage(img, 0, 0, width, height);
-      const compressedDataUrl = canvas.toDataURL('image/jpeg', 0.8);
+
+      let finalImageUrl = canvas.toDataURL('image/jpeg', 0.8);
+
+      // หากล็อกอินด้วย Supabase ให้ลองอัปโหลดขึ้น Storage Bucket ชื่อ "covers" ก่อน
+      if (isCloudUser()) {
+        try {
+          const blob = await new Promise(resolve => canvas.toBlob(resolve, 'image/jpeg', 0.82));
+          if (blob) {
+            const filePath = `${state.currentUser.id}/${Date.now()}.jpg`;
+            const { error: uploadErr } = await supabaseClient.storage
+              .from('covers')
+              .upload(filePath, blob, { contentType: 'image/jpeg', upsert: true });
+
+            if (!uploadErr) {
+              const { data: pub } = supabaseClient.storage.from('covers').getPublicUrl(filePath);
+              if (pub && pub.publicUrl) {
+                finalImageUrl = pub.publicUrl;
+              }
+            }
+          }
+        } catch (uploadCatchErr) {
+          console.warn('Storage upload fallback to Base64:', uploadCatchErr);
+        }
+      }
 
       const target = prefix === 'add' ? state.addCover : state.detailCover;
-      target.image = compressedDataUrl;
+      target.image = finalImageUrl;
       renderGradientSwatches(prefix);
       if (prefix === 'add') refreshAddCoverPreview();
       else refreshDetailCoverPreview();
@@ -1161,7 +1292,7 @@ function refreshAddCoverPreview() {
   );
 }
 
-function handleAddNewItem(event) {
+async function handleAddNewItem(event) {
   event.preventDefault();
   const title = document.getElementById('add-title').value.trim();
   if (!title) {
@@ -1169,8 +1300,7 @@ function handleAddNewItem(event) {
     return;
   }
 
-  const newItem = {
-    id: 'item-' + Date.now() + '-' + Math.random().toString(36).slice(2, 6),
+  const draftItem = {
     title,
     thaiTitle: document.getElementById('add-thai-title').value.trim(),
     type: document.getElementById('add-type').value,
@@ -1185,14 +1315,36 @@ function handleAddNewItem(event) {
     updatedAt: Date.now()
   };
 
-  state.items.unshift(newItem);
-  if (!saveItems()) {
-    state.items.shift();
-    return;
+  if (isCloudUser()) {
+    try {
+      const { data, error } = await supabaseClient
+        .from('media_items')
+        .insert(mapItemToDbRow(draftItem, state.currentUser.id))
+        .select()
+        .single();
+
+      if (error) throw error;
+      state.items.unshift(mapDbRowToItem(data));
+    } catch (err) {
+      console.error('Insert item failed:', err);
+      showToast('ไม่สามารถเพิ่มรายการขึ้นเซิร์ฟเวอร์ได้', 'error');
+      return;
+    }
+  } else {
+    const newItem = {
+      id: 'item-' + Date.now() + '-' + Math.random().toString(36).slice(2, 6),
+      ...draftItem
+    };
+    state.items.unshift(newItem);
+    if (!saveGuestItems()) {
+      state.items.shift();
+      return;
+    }
   }
+
   closeAddModal();
   renderAll();
-  showToast(`เพิ่ม "${newItem.title}" ลงในรายการแล้ว`, 'success');
+  showToast(`เพิ่ม "${draftItem.title}" ลงในรายการแล้ว`, 'success');
 }
 
 // ==================== DETAIL / EDIT MODAL ====================
@@ -1269,7 +1421,7 @@ function stepDetailProgress(delta) {
   input.value = next;
 }
 
-function handleSaveDetail(event) {
+async function handleSaveDetail(event) {
   event.preventDefault();
   const idx = state.items.findIndex(i => i.id === state.editingItemId);
   if (idx === -1) return;
@@ -1281,7 +1433,7 @@ function handleSaveDetail(event) {
   }
 
   const prev = { ...state.items[idx] };
-  state.items[idx] = {
+  const updated = {
     ...prev,
     title,
     thaiTitle: document.getElementById('detail-thai-title').value.trim(),
@@ -1297,9 +1449,29 @@ function handleSaveDetail(event) {
     updatedAt: Date.now()
   };
 
-  if (!saveItems()) {
-    state.items[idx] = prev;
-    return;
+  if (isCloudUser()) {
+    try {
+      const { data, error } = await supabaseClient
+        .from('media_items')
+        .update(mapItemToDbRow(updated, state.currentUser.id))
+        .eq('id', updated.id)
+        .eq('user_id', state.currentUser.id)
+        .select()
+        .single();
+
+      if (error) throw error;
+      state.items[idx] = mapDbRowToItem(data);
+    } catch (err) {
+      console.error('Update item failed:', err);
+      showToast('ไม่สามารถบันทึกการแก้ไขขึ้นเซิร์ฟเวอร์ได้', 'error');
+      return;
+    }
+  } else {
+    state.items[idx] = updated;
+    if (!saveGuestItems()) {
+      state.items[idx] = prev;
+      return;
+    }
   }
 
   closeDetailModal();
@@ -1307,7 +1479,7 @@ function handleSaveDetail(event) {
   showToast(`บันทึกการแก้ไข "${title}" เรียบร้อยแล้ว`, 'success');
 }
 
-function handleDeleteDetailItem() {
+async function handleDeleteDetailItem() {
   const btn = document.getElementById('detail-delete-btn');
   if (!state.deleteArmed) {
     state.deleteArmed = true;
@@ -1319,8 +1491,25 @@ function handleDeleteDetailItem() {
     return;
   }
   const item = state.items.find(i => i.id === state.editingItemId);
+
+  if (isCloudUser()) {
+    try {
+      const { error } = await supabaseClient
+        .from('media_items')
+        .delete()
+        .eq('id', state.editingItemId)
+        .eq('user_id', state.currentUser.id);
+      if (error) throw error;
+    } catch (err) {
+      console.error('Delete item failed:', err);
+      showToast('ไม่สามารถลบรายการบนเซิร์ฟเวอร์ได้', 'error');
+      return;
+    }
+  }
+
   state.items = state.items.filter(i => i.id !== state.editingItemId);
-  saveItems();
+  if (!isCloudUser()) saveGuestItems();
+
   closeDetailModal();
   renderAll();
   showToast(`ลบ "${item ? item.title : 'รายการ'}" ออกจากคลังแล้ว`, 'info');
@@ -1351,16 +1540,28 @@ document.addEventListener('keydown', (e) => {
   }
 });
 
-window.addEventListener('DOMContentLoaded', () => {
-  const existingSession = loadSession();
-  if (existingSession) {
-    state.currentUser = existingSession;
-    updateUserProfileUI();
-    loadItems();
-    updateNavbarStyles();
-    renderAll();
-  } else {
-    updateNavbarStyles();
-    showAuthScreen('login');
+window.addEventListener('DOMContentLoaded', async () => {
+  updateNavbarStyles();
+
+  // 1. ตรวจสอบ Session จาก Supabase ก่อน (หากตั้งค่าไว้แล้ว)
+  if (supabaseClient) {
+    try {
+      const { data: { session } } = await supabaseClient.auth.getSession();
+      if (session && session.user) {
+        const userProfile = await fetchUserProfile(session.user);
+        await completeSignIn(userProfile);
+        return;
+      }
+    } catch (err) {
+      console.error('Failed to check Supabase session:', err);
+    }
   }
+
+  // 2. ตรวจสอบว่าเคยเลือกโหมด Guest ไว้หรือไม่
+  if (localStorage.getItem(GUEST_SESSION_KEY) === '1') {
+    await completeSignIn({ ...GUEST_USER });
+    return;
+  }
+
+  showAuthScreen('login');
 });
