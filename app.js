@@ -815,6 +815,8 @@ function renderAll() {
 }
 
 function renderDashboard() {
+  const items = state.items;
+  const total = items.length;
   const animeCount = items.filter(i => i.type === 'anime').length;
   const mangaCount = items.filter(i => i.type === 'manga').length;
   const manhwaCount = items.filter(i => i.type === 'manhwa').length;
