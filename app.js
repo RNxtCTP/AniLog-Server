@@ -36,6 +36,12 @@ const TYPE_META = {
     unit: 'บท',
     badgeClass: 'bg-teal-500/15 text-teal-300 border-teal-500/25',
     tableBadgeClass: 'bg-teal-500/15 text-teal-300'
+  },
+  movie: {
+    label: 'หนัง',
+    unit: 'เรื่อง',
+    badgeClass: 'bg-orange-500/15 text-orange-300 border-orange-500/25',
+    tableBadgeClass: 'bg-orange-500/15 text-orange-300'
   }
 };
 
@@ -809,16 +815,16 @@ function renderAll() {
 }
 
 function renderDashboard() {
-  const items = state.items;
-  const total = items.length;
   const animeCount = items.filter(i => i.type === 'anime').length;
   const mangaCount = items.filter(i => i.type === 'manga').length;
   const manhwaCount = items.filter(i => i.type === 'manhwa').length;
+  const movieCount = items.filter(i => i.type === 'movie').length;
   const completedCount = items.filter(i => i.status === 'completed').length;
   const completedPct = total > 0 ? Math.round((completedCount / total) * 100) : 0;
 
   const animeEp = items.filter(i => i.type === 'anime').reduce((sum, i) => sum + (Number(i.progress) || 0), 0);
   const readingCh = items.filter(i => i.type === 'manga' || i.type === 'manhwa').reduce((sum, i) => sum + (Number(i.progress) || 0), 0);
+  const movieProg = items.filter(i => i.type === 'movie').reduce((sum, i) => sum + (Number(i.progress) || 0), 0);
 
   const rated = items.filter(i => Number(i.score) > 0);
   const avgScore = rated.length > 0
@@ -826,11 +832,11 @@ function renderDashboard() {
     : '-';
 
   document.getElementById('stat-total').textContent = total.toLocaleString();
-  document.getElementById('stat-total-sub').textContent = `อนิเมะ ${animeCount} • มังงะ ${mangaCount} • มังฮวา ${manhwaCount}`;
+  document.getElementById('stat-total-sub').textContent = `อนิเมะ ${animeCount} • มังงะ ${mangaCount} • มังฮวา ${manhwaCount} • หนัง ${movieCount}`;
   document.getElementById('stat-completed').textContent = completedCount.toLocaleString();
   document.getElementById('stat-completed-sub').textContent = `คิดเป็น ${completedPct}% ของทั้งหมด`;
-  document.getElementById('stat-progress').textContent = (animeEp + readingCh).toLocaleString();
-  document.getElementById('stat-progress-sub').textContent = `${animeEp.toLocaleString()} ตอน • ${readingCh.toLocaleString()} บท`;
+  document.getElementById('stat-progress').textContent = (animeEp + readingCh + movieProg).toLocaleString();
+  document.getElementById('stat-progress-sub').textContent = `${animeEp.toLocaleString()} ตอน • ${readingCh.toLocaleString()} บท • ${movieProg.toLocaleString()} เรื่อง`;
   document.getElementById('stat-avg-score').textContent = avgScore;
   document.getElementById('stat-avg-sub').textContent = rated.length > 0 ? `จาก ${rated.length} เรื่องที่ให้คะแนน` : 'ยังไม่มีเรื่องที่ให้คะแนน';
 
@@ -935,14 +941,17 @@ function renderListView() {
   const animeCount = state.items.filter(i => i.type === 'anime').length;
   const mangaCount = state.items.filter(i => i.type === 'manga').length;
   const manhwaCount = state.items.filter(i => i.type === 'manhwa').length;
+  const movieCount = state.items.filter(i => i.type === 'movie').length;
 
   document.getElementById('count-type-all').textContent = allCount;
   document.getElementById('count-type-anime').textContent = animeCount;
   document.getElementById('count-type-manga').textContent = mangaCount;
   document.getElementById('count-type-manhwa').textContent = manhwaCount;
+  document.getElementById('count-type-movie').textContent = movieCount;
 
-  ['all', 'anime', 'manga', 'manhwa'].forEach(t => {
+  ['all', 'anime', 'manga', 'manhwa', 'movie'].forEach(t => {
     const btn = document.getElementById(`type-tab-${t}`);
+    if (!btn) return;
     const active = state.typeFilter === t;
     btn.className = `px-3.5 py-1.5 rounded-lg text-xs font-semibold transition-all ${
       active ? 'bg-indigo-500 text-white shadow-sm' : 'text-slate-400 hover:text-white'
