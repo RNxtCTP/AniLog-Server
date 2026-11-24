@@ -24,12 +24,17 @@ create table if not exists public.media_items (
   total integer not null default 0 check (total >= 0),
   score numeric(3, 1) not null default 0 check (score >= 0 and score <= 10),
   genres text[] not null default '{}',
+  watch_url text not null default '',
   review text not null default '',
   cover_gradient text not null default 'indigo',
   cover_image text not null default '',
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now()
 );
+
+-- กรณีสร้างตาราง media_items ไปแล้วก่อนหน้า สามารถรันคำสั่งนี้เพื่อเพิ่มคอลัมน์ watch_url ได้ทันที
+alter table public.media_items
+  add column if not exists watch_url text not null default '';
 
 -- สร้าง Index เพื่อช่วยให้ดึงข้อมูลของแต่ละผู้ใช้ได้รวดเร็วขึ้น
 create index if not exists idx_media_items_user_updated

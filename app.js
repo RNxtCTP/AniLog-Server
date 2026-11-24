@@ -155,6 +155,7 @@ function mapDbRowToItem(row) {
     total: Number(row.total) || 0,
     score: Number(row.score) || 0,
     genres: Array.isArray(row.genres) ? row.genres : [],
+    watchUrl: row.watch_url || '',
     review: row.review || '',
     coverGradient: row.cover_gradient || 'indigo',
     coverImage: row.cover_image || '',
@@ -174,11 +175,37 @@ function mapItemToDbRow(item, userId) {
     total: Math.max(0, Number(item.total) || 0),
     score: Math.min(10, Math.max(0, Number(item.score) || 0)),
     genres: Array.isArray(item.genres) ? item.genres : [],
+    watch_url: item.watchUrl || '',
     review: item.review || '',
     cover_gradient: item.coverGradient || 'indigo',
     cover_image: item.coverImage || '',
     updated_at: new Date().toISOString()
   };
+}
+
+function normalizeExternalUrl(rawUrl) {
+  const trimmed = (rawUrl || '').trim();
+  if (!trimmed) return '';
+  const withProtocol = /^https?:\/\//i.test(trimmed) ? trimmed : `https://${trimmed}`;
+  try {
+    const parsed = new URL(withProtocol);
+    if (parsed.protocol === 'http:' || parsed.protocol === 'https:') {
+      return parsed.href;
+    }
+  } catch (err) {
+    return '';
+  }
+  return '';
+}
+
+function openWatchLink(rawUrl, event) {
+  if (event) event.stopPropagation();
+  const safeUrl = normalizeExternalUrl(rawUrl);
+  if (!safeUrl) {
+    showToast('ลิงก์เว็บไซต์ไม่ถูกต้อง กรุณาตรวจสอบอีกครั้ง', 'error');
+    return;
+  }
+  window.open(safeUrl, '_blank', 'noopener,noreferrer');
 }
 
 function parseGenres(rawStr) {
@@ -856,7 +883,14 @@ function renderDashboard() {
               <div class="h-1.5 rounded-full bg-[#0F172A] overflow-hidden">
                 <div class="h-full rounded-full bg-gradient-to-r from-indigo-500 to-sky-400 transition-all" style="width: ${totalCount > 0 ? pct : 35}%"></div>
               </div>
-              <div class="flex justify-end pt-1">
+              <div class="flex items-center justify-end gap-1.5 pt-1">
+                ${item.watchUrl ? `
+                  <button type="button" onclick="openWatchLink('${escapeHtml(item.watchUrl)}', event)" title="เปิดเว็บสำหรับดู/อ่าน" class="px-2.5 py-1 rounded-lg bg-emerald-500/15 hover:bg-emerald-500 text-emerald-300 hover:text-white border border-emerald-500/30 text-[11px] font-semibold transition-all inline-flex items-center gap-1">
+                    <span>ดู/อ่าน</span>
+                    <svg class="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2.2">
+                      <path stroke-linecap="round" stroke-linejoin="round" d="M13.5 6H5.25A2.25 2.25 0 003 8.25v10.5A2.25 2.25 0 005.25 21h10.5A2.25 2.25 0 0018 18.75V10.5m-10.5 6L21 3m0 0h-5.25M21 3v5.25" />
+                    </svg>
+                  </button>` : ''}
                 <button type="button" onclick="quickIncrement('${item.id}', event)" class="px-2.5 py-1 rounded-lg bg-indigo-500/15 hover:bg-indigo-500 text-indigo-300 hover:text-white border border-indigo-500/30 text-[11px] font-semibold transition-all">
                   +1 ${unit}
                 </button>
@@ -1002,9 +1036,17 @@ function renderListView() {
                 <div class="space-y-1.5">
                   <div class="flex items-center justify-between text-[11px] text-slate-400">
                     <span>${progress}${total > 0 ? ` / ${total}` : ''} ${unit}</span>
-                    <button type="button" onclick="quickIncrement('${item.id}', event)" class="px-2 py-0.5 rounded-md bg-indigo-500/15 hover:bg-indigo-500 text-indigo-300 hover:text-white text-[10px] font-semibold transition-colors">
-                      +1
-                    </button>
+                    <div class="flex items-center gap-1">
+                      ${item.watchUrl ? `
+                        <button type="button" onclick="openWatchLink('${escapeHtml(item.watchUrl)}', event)" title="เปิดเว็บสำหรับดู/อ่าน" class="px-1.5 py-0.5 rounded-md bg-emerald-500/15 hover:bg-emerald-500 text-emerald-300 hover:text-white text-[10px] font-semibold transition-colors inline-flex items-center gap-0.5">
+                          <svg class="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2.2">
+                            <path stroke-linecap="round" stroke-linejoin="round" d="M13.5 6H5.25A2.25 2.25 0 003 8.25v10.5A2.25 2.25 0 005.25 21h10.5A2.25 2.25 0 0018 18.75V10.5m-10.5 6L21 3m0 0h-5.25M21 3v5.25" />
+                          </svg>
+                        </button>` : ''}
+                      <button type="button" onclick="quickIncrement('${item.id}', event)" class="px-2 py-0.5 rounded-md bg-indigo-500/15 hover:bg-indigo-500 text-indigo-300 hover:text-white text-[10px] font-semibold transition-colors">
+                        +1
+                      </button>
+                    </div>
                   </div>
                   <div class="h-1 rounded-full bg-[#0F172A] overflow-hidden">
                     <div class="h-full rounded-full bg-indigo-500" style="width: ${total > 0 ? pct : (progress > 0 ? 35 : 0)}%"></div>
@@ -1077,9 +1119,18 @@ function renderListView() {
                       ${Number(item.score) > 0 ? `<span class="text-xs font-bold text-amber-400">★ ${item.score}</span>` : '<span class="text-xs text-slate-500">-</span>'}
                     </td>
                     <td class="py-3 px-4 text-right whitespace-nowrap">
-                      <button type="button" onclick="event.stopPropagation(); openDetailModal('${item.id}')" class="px-3 py-1 rounded-lg bg-[#0F172A] hover:bg-indigo-500/20 border border-[#334155] text-xs text-slate-300 hover:text-indigo-200 transition-colors">
-                        แก้ไข
-                      </button>
+                      <div class="inline-flex items-center justify-end gap-1.5">
+                        ${item.watchUrl ? `
+                          <button type="button" onclick="openWatchLink('${escapeHtml(item.watchUrl)}', event)" title="เปิดเว็บสำหรับดู/อ่าน" class="px-2.5 py-1 rounded-lg bg-emerald-500/15 hover:bg-emerald-500 border border-emerald-500/30 text-xs text-emerald-300 hover:text-white transition-colors inline-flex items-center gap-1">
+                            <span>ดู/อ่าน</span>
+                            <svg class="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2.2">
+                              <path stroke-linecap="round" stroke-linejoin="round" d="M13.5 6H5.25A2.25 2.25 0 003 8.25v10.5A2.25 2.25 0 005.25 21h10.5A2.25 2.25 0 0018 18.75V10.5m-10.5 6L21 3m0 0h-5.25M21 3v5.25" />
+                            </svg>
+                          </button>` : ''}
+                        <button type="button" onclick="event.stopPropagation(); openDetailModal('${item.id}')" class="px-3 py-1 rounded-lg bg-[#0F172A] hover:bg-indigo-500/20 border border-[#334155] text-xs text-slate-300 hover:text-indigo-200 transition-colors">
+                          แก้ไข
+                        </button>
+                      </div>
                     </td>
                   </tr>`;
               }).join('')}
@@ -1309,6 +1360,7 @@ async function handleAddNewItem(event) {
     total: Math.max(0, Number(document.getElementById('add-total').value) || 0),
     score: Math.min(10, Math.max(0, Number(document.getElementById('add-score').value) || 0)),
     genres: parseGenres(document.getElementById('add-genres').value),
+    watchUrl: normalizeExternalUrl(document.getElementById('add-watch-url').value),
     review: document.getElementById('add-review').value.trim(),
     coverGradient: state.addCover.gradient,
     coverImage: state.addCover.image,
@@ -1327,7 +1379,7 @@ async function handleAddNewItem(event) {
       state.items.unshift(mapDbRowToItem(data));
     } catch (err) {
       console.error('Insert item failed:', err);
-      showToast('ไม่สามารถเพิ่มรายการขึ้นเซิร์ฟเวอร์ได้', 'error');
+      showToast('ไม่สามารถเพิ่มรายการขึ้นเซิร์ฟเวอร์ได้ (ตรวจสอบว่าอัปเดตคอลัมน์ watch_url ใน SQL แล้ว)', 'error');
       return;
     }
   } else {
@@ -1368,10 +1420,12 @@ function openDetailModal(id) {
   document.getElementById('detail-total').value = Number(item.total) || 0;
   document.getElementById('detail-score').value = Number(item.score) || 0;
   document.getElementById('detail-genres').value = (item.genres || []).join(', ');
+  document.getElementById('detail-watch-url').value = item.watchUrl || '';
   document.getElementById('detail-review').value = item.review || '';
   document.getElementById('detail-cover-url-input').value = (item.coverImage && item.coverImage.startsWith('http')) ? item.coverImage : '';
   document.getElementById('detail-delete-btn').textContent = 'ลบรายการนี้';
   document.getElementById('detail-cover-editor-panel').classList.add('hidden');
+  updateDetailWatchBtnState();
 
   switchCoverTab('detail', 'gradient');
   renderGradientSwatches('detail');
@@ -1421,6 +1475,19 @@ function stepDetailProgress(delta) {
   input.value = next;
 }
 
+function updateDetailWatchBtnState() {
+  const input = document.getElementById('detail-watch-url');
+  const btn = document.getElementById('detail-open-watch-btn');
+  if (!input || !btn) return;
+  const hasUrl = Boolean(normalizeExternalUrl(input.value));
+  btn.classList.toggle('hidden', !hasUrl);
+}
+
+function openDetailWatchLink() {
+  const input = document.getElementById('detail-watch-url');
+  if (input) openWatchLink(input.value);
+}
+
 async function handleSaveDetail(event) {
   event.preventDefault();
   const idx = state.items.findIndex(i => i.id === state.editingItemId);
@@ -1443,6 +1510,7 @@ async function handleSaveDetail(event) {
     total: Math.max(0, Number(document.getElementById('detail-total').value) || 0),
     score: Math.min(10, Math.max(0, Number(document.getElementById('detail-score').value) || 0)),
     genres: parseGenres(document.getElementById('detail-genres').value),
+    watchUrl: normalizeExternalUrl(document.getElementById('detail-watch-url').value),
     review: document.getElementById('detail-review').value.trim(),
     coverGradient: state.detailCover.gradient,
     coverImage: state.detailCover.image,
@@ -1463,7 +1531,7 @@ async function handleSaveDetail(event) {
       state.items[idx] = mapDbRowToItem(data);
     } catch (err) {
       console.error('Update item failed:', err);
-      showToast('ไม่สามารถบันทึกการแก้ไขขึ้นเซิร์ฟเวอร์ได้', 'error');
+      showToast('ไม่สามารถบันทึกการแก้ไขขึ้นเซิร์ฟเวอร์ได้ (ตรวจสอบว่าอัปเดตคอลัมน์ watch_url ใน SQL แล้ว)', 'error');
       return;
     }
   } else {
